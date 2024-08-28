@@ -21,15 +21,14 @@ model_name_or_path = "openai/whisper-large-v3"
 task = "translate"
 language = "zh"
 
-dataset_path = "/kaggle/working/whisper-dataset"
-raw_dataset = load_from_disk(dataset_path).train_test_split(test_size=0.1)
-raw_dataset = raw_dataset.cast_column("audio", Audio(sampling_rate=16000))
-
+dataset_path = "/kaggle/working/token-whisper-dataset"
+raw_dataset = load_from_disk(dataset_path)
 
 feature_extractor = WhisperFeatureExtractor.from_pretrained(model_name_or_path)
 tokenizer = WhisperTokenizer.from_pretrained(model_name_or_path, language=language, task=task)
 processor = WhisperProcessor.from_pretrained(model_name_or_path, language=language, task=task)
 
+'''
 def prepare_dataset(batch):
     # load and resample audio data from 48 to 16kHz
     audio = batch["audio"]
@@ -42,6 +41,7 @@ def prepare_dataset(batch):
     return batch
 
 raw_dataset = raw_dataset.map(prepare_dataset, remove_columns=raw_dataset.column_names["train"], num_proc=2)
+'''
 
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:

@@ -73,10 +73,7 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 metric = evaluate.load("wer")
 
-local_rank = os.getenv("LOCAL_RANK")
-device_map = "cuda:" + str(local_rank)
-
-model = WhisperForConditionalGeneration.from_pretrained(model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True), device_map=device_map)
+model = WhisperForConditionalGeneration.from_pretrained(model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True))
 
 model.config.forced_decoder_ids = None
 model.config.suppress_tokens = []
@@ -85,7 +82,6 @@ model = prepare_model_for_kbit_training(model)
 config = LoraConfig(r=32, lora_alpha=64, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none")
 
 model = get_peft_model(model, config)
-model.print_trainable_parameters()
 
 training_args = Seq2SeqTrainingArguments(
     output_dir="/kaggle/working/pert",  # change to a repo name of your choice
@@ -103,6 +99,8 @@ training_args = Seq2SeqTrainingArguments(
     eval_steps=500,
     remove_unused_columns=False,  # required as the PeftModel forward doesn't have the signature of the wrapped model's forward
     label_names=["labels"],  # same reason as above
+    ddp_find_unused_parameters=False,
+    dataloader_pin_memory=False,
 )
 
 # This callback helps to save only the adapter weights and remove the base model weights.

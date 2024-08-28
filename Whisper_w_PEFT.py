@@ -73,9 +73,8 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 metric = evaluate.load("wer")
 
-from accelerate import Accelerator
-device_index = Accelerator().process_index
-device_map = {"": device_index}
+local_rank = os.getenv("LOCAL_RANK")
+device_map = "cuda:" + str(local_rank)
 
 model = WhisperForConditionalGeneration.from_pretrained(model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True), device_map=device_map)
 

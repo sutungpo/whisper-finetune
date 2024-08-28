@@ -73,7 +73,11 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 metric = evaluate.load("wer")
 
-model = WhisperForConditionalGeneration.from_pretrained(model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True))
+from accelerate import Accelerator
+device_index = Accelerator().process_index
+device_map = {"": device_index}
+
+model = WhisperForConditionalGeneration.from_pretrained(model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True), device_map=device_map)
 
 model.config.forced_decoder_ids = None
 model.config.suppress_tokens = []

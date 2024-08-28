@@ -100,8 +100,8 @@ training_args = Seq2SeqTrainingArguments(
     per_device_eval_batch_size=16,
     generation_max_length=225,
     logging_steps=25,
-    save_steps=1000,
-    eval_steps=1000,
+    save_steps=500,
+    eval_steps=500,
     remove_unused_columns=False,  # required as the PeftModel forward doesn't have the signature of the wrapped model's forward
     label_names=["labels"],  # same reason as above
 )

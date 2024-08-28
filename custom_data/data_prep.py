@@ -7,8 +7,8 @@ parser.add_argument('--output_data_dir', type=str, required=False, default='op_d
 
 args = parser.parse_args()
 
-scp_entries = open(f"{args.source_data_dir}/audio_paths", 'r').readlines()
-txt_entries = open(f"{args.source_data_dir}/text", 'r').readlines()
+scp_entries = open(f"{args.source_data_dir}/audio_paths", 'r',encoding='utf-8').readlines()
+txt_entries = open(f"{args.source_data_dir}/text", 'r',encoding='utf-8').readlines()
 
 if len(scp_entries) == len(txt_entries):
     audio_dataset = Dataset.from_dict({"audio": [audio_path.split()[1].strip() for audio_path in scp_entries],

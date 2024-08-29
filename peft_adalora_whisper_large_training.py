@@ -760,7 +760,7 @@ def main():
         accelerator.load_state(os.path.join(args.output_dir, "best_checkpoint"))
         model.resize_modules_by_rank_pattern(model.peft_config["default"].rank_pattern, "default")
         eval_metrics = evaluation_loop(
-            model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
+            model.module, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
         )
         if args.with_tracking:
             best_metrics = {"best_" + k: v for k, v in eval_metrics.items()}

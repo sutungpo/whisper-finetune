@@ -88,14 +88,14 @@ model = get_peft_model(model, config)
 
 training_args = Seq2SeqTrainingArguments(
     output_dir="/kaggle/working/pert",  # change to a repo name of your choice
-    per_device_train_batch_size=8,
+    per_device_train_batch_size=1,
     gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
     learning_rate=5e-5,
     warmup_steps=500,
     max_steps=4000,
     evaluation_strategy="steps",
     fp16=True,
-    per_device_eval_batch_size=8,
+    per_device_eval_batch_size=1,
     generation_max_length=225,
     logging_steps=25,
     save_steps=500,

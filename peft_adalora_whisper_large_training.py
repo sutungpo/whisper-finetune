@@ -691,7 +691,7 @@ def main():
                 # Note that this requires parameter gradients.
                 # Hence being called before optimizer.zero_grad().
                 if args.use_peft and args.use_adalora:
-                    model.update_and_allocate(global_step)
+                    model.module.update_and_allocate(global_step)
 
                 optimizer.zero_grad()
                 global_step += 1

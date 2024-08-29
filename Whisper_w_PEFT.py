@@ -102,6 +102,8 @@ training_args = Seq2SeqTrainingArguments(
     eval_steps=500,
     remove_unused_columns=False,  # required as the PeftModel forward doesn't have the signature of the wrapped model's forward
     label_names=["labels"],  # same reason as above
+    gradient_checkpointing=True,
+    gradient_checkpointing_kwargs = {"use_reentrant": False}, #must be false for DDP
 )
 
 # This callback helps to save only the adapter weights and remove the base model weights.

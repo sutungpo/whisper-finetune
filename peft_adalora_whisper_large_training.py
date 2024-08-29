@@ -628,7 +628,7 @@ def main():
     # Note here that the max steps is adjusted by the accelerator's num_processes
     args.max_train_steps = math.ceil(args.max_train_steps / accelerator.num_processes)
     if args.use_peft and args.use_adalora:
-        model.base_model.peft_config["default"].total_step = args.max_train_steps
+        model.module.base_model.peft_config["default"].total_step = args.max_train_steps
         # model.base_model.peft_config.total_step = args.max_train_steps
 
     # We need to initialize the trackers we use, and also store our configuration.

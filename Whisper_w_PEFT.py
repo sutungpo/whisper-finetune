@@ -88,22 +88,23 @@ model = get_peft_model(model, config)
 
 training_args = Seq2SeqTrainingArguments(
     output_dir="/kaggle/working/pert",  # change to a repo name of your choice
-    per_device_train_batch_size=1,
+    per_device_train_batch_size=8,
     gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
     learning_rate=5e-5,
     warmup_steps=500,
     max_steps=4000,
     evaluation_strategy="steps",
     fp16=True,
-    per_device_eval_batch_size=1,
+    per_device_eval_batch_size=8,
     generation_max_length=225,
     logging_steps=25,
     save_steps=500,
     eval_steps=500,
     remove_unused_columns=False,  # required as the PeftModel forward doesn't have the signature of the wrapped model's forward
     label_names=["labels"],  # same reason as above
-    gradient_checkpointing=True,
-    gradient_checkpointing_kwargs = {"use_reentrant": False}, #must be false for DDP
+    gradient_checkpointing=False,
+    gradient_checkpointing_kwargs = {"use_reentrant": False}, #must be false for DDP,
+    ddp_find_unused_parameters=False
 )
 
 # This callback helps to save only the adapter weights and remove the base model weights.

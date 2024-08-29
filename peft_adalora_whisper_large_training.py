@@ -713,7 +713,7 @@ def main():
 
             if global_step % args.evaluation_steps == 0:
                 eval_metrics = evaluation_loop(
-                    model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
+                    model.module, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
                 )
                 if args.with_tracking:
                     logger.info(f"Step {global_step} eval metrics: {eval_metrics}")

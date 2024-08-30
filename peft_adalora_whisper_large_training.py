@@ -542,6 +542,7 @@ def main():
     # metric
     metric = evaluate.load("wer")
 
+    logger.info(f'starting model initialization')
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True)

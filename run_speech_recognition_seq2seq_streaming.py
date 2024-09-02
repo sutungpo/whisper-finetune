@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import datasets
 import torch
-from datasets import DatasetDict, IterableDatasetDict, interleave_datasets, load_dataset
+from datasets import DatasetDict, IterableDatasetDict, interleave_datasets, load_dataset, load_from_disk
 from torch.utils.data import IterableDataset
 
 import evaluate
@@ -129,6 +129,9 @@ class DataTrainingArguments:
 
     dataset_name: str = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+    )
+    dataset_path: str = field(
+        default=None, metadata={"help": "The path of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
@@ -352,6 +355,7 @@ def main():
     # 4. Load dataset
     raw_datasets = IterableDatasetDict() if data_args.streaming else DatasetDict()
 
+    """
     if training_args.do_train:
         raw_datasets["train"] = load_maybe_streaming_dataset(
             data_args.dataset_name,
@@ -370,6 +374,8 @@ def main():
             streaming=data_args.streaming,
         )
 
+    """
+    raw_datasets = load_from_disk(data_args.dataset_path).train_test_split(0.2)
     raw_datasets_features = list(next(iter(raw_datasets.values())).features.keys())
 
     if data_args.audio_column_name not in raw_datasets_features:
@@ -561,7 +567,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=vectorized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=vectorized_datasets["eval"] if training_args.do_eval else None,
+        eval_dataset=vectorized_datasets["test"] if training_args.do_eval else None,
         tokenizer=feature_extractor,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,

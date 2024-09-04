@@ -405,23 +405,26 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
     wer = 100 * metric.compute(predictions=predictions, references=references)
     normalized_wer = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
     eval_metrics = {"eval/wer": wer, "eval/normalized_wer": normalized_wer}
-    if accelerator.get_tracker("wandb"):
-        sample_size = min(len(predictions), 256)
-        ids = [randint(0, len(predictions) - 1) for p in range(0, sample_size)]
-        sample_predictions = [predictions[i] for i in ids]
-        sample_references = [references[i] for i in ids]
-        sample_normalized_predictions = [normalized_predictions[i] for i in ids]
-        sample_normalized_references = [normalized_references[i] for i in ids]
-        table_rows = [
-            list(r)
-            for r in zip(
-                sample_predictions, sample_references, sample_normalized_predictions, sample_normalized_references
+    try:
+        if accelerator.get_tracker("wandb"):
+            sample_size = min(len(predictions), 256)
+            ids = [randint(0, len(predictions) - 1) for p in range(0, sample_size)]
+            sample_predictions = [predictions[i] for i in ids]
+            sample_references = [references[i] for i in ids]
+            sample_normalized_predictions = [normalized_predictions[i] for i in ids]
+            sample_normalized_references = [normalized_references[i] for i in ids]
+            table_rows = [
+                list(r)
+                for r in zip(
+                    sample_predictions, sample_references, sample_normalized_predictions, sample_normalized_references
+                )
+            ]
+            eval_metrics["eval_samples"] = wandb.Table(
+                columns=["predictions", "references", "normalized_predictions", "normalized_references"],
+                rows=table_rows,
             )
-        ]
-        eval_metrics["eval_samples"] = wandb.Table(
-            columns=["predictions", "references", "normalized_predictions", "normalized_references"],
-            rows=table_rows,
-        )
+    except ValueError:
+        pass
     return eval_metrics
 
 
@@ -714,7 +717,7 @@ def main():
 
             if global_step % args.evaluation_steps == 0:
                 eval_metrics = evaluation_loop(
-                    model.module, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
+                    model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
                 )
                 if args.with_tracking:
                     logger.info(f"Step {global_step} eval metrics: {eval_metrics}")
@@ -780,7 +783,7 @@ def main():
             )
 
     with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-        eval_metrics.pop("eval_samples")
+        eval_metrics.pop("eval_samples", None)
         json.dump(eval_metrics, f)
 
 

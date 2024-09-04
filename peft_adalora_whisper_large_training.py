@@ -375,6 +375,7 @@ def get_audio_length_processor(max_input_length):
 
 
 def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator):
+    model = accelerator.unwrap_model(model)
     model.eval()
     predictions = []
     references = []

@@ -403,9 +403,11 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
                 normalized_references.extend([normalizer(label).strip() for label in decoded_labels])
             del generated_tokens, labels, batch
         gc.collect()
-    wer = 100 * metric.compute(predictions=predictions, references=references)
-    normalized_wer = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
-    eval_metrics = {"eval/wer": wer, "eval/normalized_wer": normalized_wer}
+    result = metric.compute(predictions=predictions, references=references)
+    bleu = result["bleu"]
+    #normalized_wer = metric.compute(predictions=normalized_predictions, references=normalized_references)
+    #eval_metrics = {"eval/wer": wer, "eval/normalized_wer": normalized_wer}
+    eval_metrics = {"eval/wer": bleu}
     try:
         if accelerator.get_tracker("wandb"):
             sample_size = min(len(predictions), 256)
@@ -424,7 +426,7 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
                 columns=["predictions", "references", "normalized_predictions", "normalized_references"],
                 rows=table_rows,
             )
-    except ValueError:
+    except:
         pass
     return eval_metrics
 
@@ -544,7 +546,7 @@ def main():
     )
 
     # metric
-    metric = evaluate.load("wer")
+    metric = evaluate.load("bleu")
 
     logger.info(f'starting model initialization')
     # model

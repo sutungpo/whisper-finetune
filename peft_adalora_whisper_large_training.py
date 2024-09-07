@@ -42,7 +42,7 @@ from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 # peft imports
 from peft import AdaLoraConfig, LoraConfig, PeftModel, get_peft_model
 
-
+logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__, log_level="INFO")
 
 

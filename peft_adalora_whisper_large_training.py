@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -673,9 +674,12 @@ def main():
         accelerator.load_state(args.resume_from_checkpoint)
         path = os.path.basename(args.resume_from_checkpoint)
         training_difference = os.path.splitext(path)[0]
-        global_step = resume_step = int(training_difference.replace("step_", ""))
-        starting_epoch = resume_step // len(train_dataloader)
-        resume_step -= starting_epoch * len(train_dataloader)
+        match_result = re.search(r'\d+$',training_difference)
+        if match_result:
+            global_step = resume_step = int(match_result.group())
+            #global_step = resume_step = int(training_difference.replace("step_", ""))
+            starting_epoch = resume_step // len(train_dataloader)
+            resume_step -= starting_epoch * len(train_dataloader)
 
     # We need to adjust the progress bar to the current step
     progress_bar.update(resume_step)

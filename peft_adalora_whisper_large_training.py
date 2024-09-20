@@ -694,6 +694,7 @@ def main():
                 loss = outputs.loss
                 accelerator.backward(loss)
                 optimizer.step()
+                logger.info(f"optmizer's scalars: {optimizer.scaler}")
                 lr_scheduler.step()
 
                 # Update the importance of low-rank matrices

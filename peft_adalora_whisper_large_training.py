@@ -672,7 +672,6 @@ def main():
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         accelerator.load_state(args.resume_from_checkpoint)
-        model.module.resize_modules_by_rank_pattern(model.peft_config["default"].rank_pattern, "default")
         path = os.path.basename(args.resume_from_checkpoint)
         training_difference = os.path.splitext(path)[0]
         match_result = re.search(r'\d+$',training_difference)

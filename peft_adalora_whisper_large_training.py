@@ -605,6 +605,8 @@ def main():
                 target_modules=["q_proj", "v_proj"],
                 lora_dropout=args.lora_dropout,
             )
+            if args.resume_from_checkpoint:
+                config = LoraConfig.from_pretrained(args.resume_from_checkpoint)
 
         model = get_peft_model(model, config)
         model.print_trainable_parameters()
@@ -694,7 +696,8 @@ def main():
                 loss = outputs.loss
                 accelerator.backward(loss)
                 optimizer.step()
-                logger.info(f"optmizer's scalars: {optimizer.scaler.get_scale()}")
+                if optimizer.scaler is not None:
+                    logger.info(f"step {step} of epoch {epoch}:optmizer's scalars {optimizer.scaler.get_scale()}")
                 lr_scheduler.step()
 
                 # Update the importance of low-rank matrices

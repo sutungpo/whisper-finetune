@@ -794,8 +794,9 @@ def main():
             )
 
     with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-        eval_metrics.pop("eval_samples", None)
-        json.dump(eval_metrics, f)
+        if eval_metrics is not None:
+            eval_metrics.pop("eval_samples", None)
+            json.dump(eval_metrics, f)
 
 
 if __name__ == "__main__":

@@ -44,8 +44,6 @@ from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from peft import AdaLoraConfig, LoraConfig, PeftModel, get_peft_model
 
 logger = get_logger(__name__, log_level="INFO")
-file_handler = logging.FileHandler("log.txt")
-logger.logger.addHandler(file_handler)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Whisper Fine-Tuning with AdaLora")
@@ -446,6 +444,7 @@ def main():
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
+        handlers=[logging.FileHandler("log.txt"), logging.StreamHandler()]
     )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
@@ -696,9 +695,9 @@ def main():
                 outputs = model(**batch)
                 loss = outputs.loss
                 accelerator.backward(loss)
-                optimizer.step()
                 if optimizer.scaler is not None:
                     logger.info(f"step {step} of epoch {epoch}:optmizer's scalars {optimizer.scaler.get_scale()}")
+                optimizer.step()
                 lr_scheduler.step()
 
                 # Update the importance of low-rank matrices

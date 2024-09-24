@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -202,7 +203,12 @@ def parse_args():
         default=None,
         help="If the training should continue from a checkpoint folder.",
     )
-
+    parser.add_argument(
+        "--initialize_from_checkpoint",
+        type=str,
+        default=None,
+        help="If the initialize from a checkpoint folder.",
+    )
     # lora/adalora specific args
     parser.add_argument(
         "--use_peft",
@@ -326,7 +332,7 @@ def prepare_dataset_wrapper(do_lower_case, do_remove_punctuation, processor, nor
 
 def save_model_hook(models, weights, output_dir):
     for model in models:
-        model.save_pretrained(output_dir)
+        model.save_pretrained(output_dir, safe_serialization=False)
         # make sure to pop weight so that corresponding model is not saved again
         weights.pop()
 
@@ -335,7 +341,7 @@ def load_model_hook(models, input_dir):
     while len(models) > 0:
         model = models.pop()
         # pop models so that they are not loaded again
-        PeftModel.from_pretrained(model.base_model.model, input_dir)
+        PeftModel.from_pretrained(model.base_model.model, input_dir, is_trainable=True)
 
 
 @dataclass
@@ -433,19 +439,22 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
 def main():
     args = parse_args()
 
-    accelerator_kwargs = {"gradient_accumulation_steps": args.gradient_accumulation_steps}
+    accelerator_kwargs = {
+        "gradient_accumulation_steps": args.gradient_accumulation_steps
+    }
     if args.with_tracking:
         accelerator_kwargs["log_with"] = args.report_to
         accelerator_kwargs["project_dir"] = args.output_dir
     accelerator = Accelerator(**accelerator_kwargs)
 
     # Make one log on every process with the configuration for debugging.
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.DEBUG)
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
-        handlers=[logging.FileHandler("log.txt"), logging.StreamHandler()]
-    )
+        handlers=[logging.FileHandler("log.txt"),stream_handler])
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -479,10 +488,15 @@ def main():
     accelerator.wait_for_everyone()
 
     # load dataset either in streaming mode or not
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.language, task=args.task)
+    processor = WhisperProcessor.from_pretrained(args.model_name_or_path,
+                                                 language=args.language,
+                                                 task=args.task)
     normalizer = BasicTextNormalizer()
-    prepare_dataset = prepare_dataset_wrapper(args.do_lower_case, args.do_remove_punctuation, processor, normalizer)
-    is_audio_in_length_range = get_audio_length_processor(args.max_audio_input_length)
+    prepare_dataset = prepare_dataset_wrapper(args.do_lower_case,
+                                              args.do_remove_punctuation,
+                                              processor, normalizer)
+    is_audio_in_length_range = get_audio_length_processor(
+        args.max_audio_input_length)
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
     if args.dataset_in_streaming_mode:
@@ -505,7 +519,8 @@ def main():
     raw_datasets["test"] = loading_method(args.dataset_name, args.language_abbr, split=test_split, use_auth_token=True)
     '''
     raw_datasets = load_from_disk(args.dataset_path).train_test_split(0.1)
-    raw_datasets = raw_datasets.cast_column("audio", Audio(sampling_rate=16000))
+    raw_datasets = raw_datasets.cast_column("audio",
+                                            Audio(sampling_rate=16000))
 
     logger.info("Dataset loaded: %s", raw_datasets)
     logger.info(f'{raw_datasets["train"][0]}')
@@ -523,10 +538,10 @@ def main():
         )
 
     # filter out audio files that are too long from the training set
-    is_audio_in_length_range = get_audio_length_processor(args.max_audio_input_length)
+    is_audio_in_length_range = get_audio_length_processor(
+        args.max_audio_input_length)
     vectorized_datasets["train"] = vectorized_datasets["train"].filter(
-        is_audio_in_length_range, input_columns=["input_length"]
-    )
+        is_audio_in_length_range, input_columns=["input_length"])
 
     # get dataloaders
     train_dataloader = DataLoader(
@@ -551,11 +566,12 @@ def main():
     logger.info(f'starting model initialization')
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
-        args.model_name_or_path, quantization_config=BitsAndBytesConfig(load_in_8bit=True)
-    )
+        args.model_name_or_path,
+        quantization_config=BitsAndBytesConfig(load_in_8bit=True))
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
-    if len(set(model.hf_device_map.values()).intersection({"cpu", "disk"})) > 0:
+    if len(set(model.hf_device_map.values()).intersection({"cpu",
+                                                           "disk"})) > 0:
         raise ValueError("Training on CPU or disk is not supported.")
     if len(set(model.hf_device_map.values())) > 1:
         device_map = model.hf_device_map.copy()
@@ -564,8 +580,10 @@ def main():
         # Won't arise during inference as `labels` aren't supplied during that time
         # instead of changing device of one of the tied modules, I have to do this for all tied modules
         # else the execution device of remaining tied modules isn't changed
-        device_map["model.decoder.embed_tokens"] = model._hf_hook.execution_device
-        device_map["model.decoder.embed_positions"] = model._hf_hook.execution_device
+        device_map[
+            "model.decoder.embed_tokens"] = model._hf_hook.execution_device
+        device_map[
+            "model.decoder.embed_positions"] = model._hf_hook.execution_device
         device_map["proj_out"] = model._hf_hook.execution_device
         dispatch_model(model, device_map=device_map)
 
@@ -580,7 +598,8 @@ def main():
         def make_inputs_require_grad(module, input, output):
             output.requires_grad_(True)
 
-        model.model.encoder.conv1.register_forward_hook(make_inputs_require_grad)
+        model.model.encoder.conv1.register_forward_hook(
+            make_inputs_require_grad)
 
         # wrapping model with adalora tuner
         if args.use_adalora:
@@ -594,7 +613,9 @@ def main():
                 deltaT=args.delta_t,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                target_modules=["k_proj", "q_proj", "v_proj", "out_proj", "fc1", "fc2"],
+                target_modules=[
+                    "k_proj", "q_proj", "v_proj", "out_proj", "fc1", "fc2"
+                ],
                 orth_reg_weight=args.orth_reg_weight,
             )
         else:
@@ -604,20 +625,25 @@ def main():
                 target_modules=["q_proj", "v_proj"],
                 lora_dropout=args.lora_dropout,
             )
-            if args.resume_from_checkpoint:
-                config = LoraConfig.from_pretrained(args.resume_from_checkpoint)
 
-        model = get_peft_model(model, config)
+        if args.initialize_from_checkpoint:
+            model = PeftModel.from_pretrained(model, args.initialize_from_checkpoint, is_trainable=True)
+        else:
+            model = get_peft_model(model, config)
         model.print_trainable_parameters()
 
     # optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(),
+                                  lr=args.learning_rate,
+                                  weight_decay=args.weight_decay)
 
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(
+        len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     else:
-        args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+        args.num_train_epochs = math.ceil(args.max_train_steps /
+                                          num_update_steps_per_epoch)
 
     # scheduler
     lr_scheduler = get_scheduler(
@@ -629,15 +655,16 @@ def main():
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler)
 
     accelerator.print(model)
 
     # Note here that the max steps is adjusted by the accelerator's num_processes
-    args.max_train_steps = math.ceil(args.max_train_steps / accelerator.num_processes)
+    args.max_train_steps = math.ceil(args.max_train_steps /
+                                     accelerator.num_processes)
     if args.use_peft and args.use_adalora:
-        model.module.base_model.peft_config["default"].total_step = args.max_train_steps
+        model.module.base_model.peft_config[
+            "default"].total_step = args.max_train_steps
         # model.base_model.peft_config.total_step = args.max_train_steps
 
     # We need to initialize the trackers we use, and also store our configuration.
@@ -646,10 +673,13 @@ def main():
         run_name = f"run-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         experiment_config = vars(args)
         # TensorBoard cannot log Enums, need the raw value
-        experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
-        accelerator.init_trackers(
-            "Whisper PEFT Fine-Tuning", config=experiment_config, init_kwargs={"wandb": {"name": run_name}}
-        )
+        experiment_config["lr_scheduler_type"] = experiment_config[
+            "lr_scheduler_type"].value
+        accelerator.init_trackers("Whisper PEFT Fine-Tuning",
+                                  config=experiment_config,
+                                  init_kwargs={"wandb": {
+                                      "name": run_name
+                                  }})
 
     # saving and loading checkpoints for resuming training
     accelerator.register_save_state_pre_hook(save_model_hook)
@@ -658,25 +688,32 @@ def main():
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     logger.info("***** Running training *****")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(
+        f"  Instantaneous batch size per device = {args.per_device_train_batch_size}"
+    )
+    logger.info(
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    )
+    logger.info(
+        f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     logger.info(f"  accelerator num_processes = {accelerator.num_processes}")
     # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(args.max_train_steps),
+                        disable=not accelerator.is_local_main_process)
     global_step = 0
     starting_epoch = 0
     best_metric = None
     resume_step = 0
-    forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task=args.task)
+    forced_decoder_ids = processor.get_decoder_prompt_ids(
+        language=args.language, task=args.task)
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         accelerator.load_state(args.resume_from_checkpoint)
         path = os.path.basename(args.resume_from_checkpoint)
         training_difference = os.path.splitext(path)[0]
-        match_result = re.search(r'\d+$',training_difference)
+        match_result = re.search(r'\d+$', training_difference)
         if match_result:
             global_step = resume_step = int(match_result.group())
             #global_step = resume_step = int(training_difference.replace("step_", ""))
@@ -690,13 +727,17 @@ def main():
         if args.with_tracking:
             total_loss = 0
             running_loss = 0
-        for step, batch in enumerate(accelerator.skip_first_batches(train_dataloader, num_batches=resume_step)):
+        for step, batch in enumerate(
+                accelerator.skip_first_batches(train_dataloader,
+                                               num_batches=resume_step)):
             with accelerator.accumulate(model):
                 outputs = model(**batch)
                 loss = outputs.loss
                 accelerator.backward(loss)
                 if optimizer.scaler is not None:
-                    logger.info(f"step {step} of epoch {epoch}:optmizer's scalars {optimizer.scaler.get_scale()}")
+                    logger.info(
+                        f"step {step} of epoch {epoch}:optmizer's scalars {optimizer.scaler.get_scale()}"
+                    )
                 optimizer.step()
                 lr_scheduler.step()
 
@@ -718,24 +759,33 @@ def main():
                 running_loss += step_loss
 
             if global_step % args.checkpointing_steps == 0:
-                output_dir = os.path.join(args.output_dir, f"step_{global_step}")
-                accelerator.save_state(output_dir)
+                output_dir = os.path.join(args.output_dir,
+                                          f"step_{global_step}")
+                accelerator.save_state(output_dir, safe_serialization=False)
 
             if global_step % args.logging_steps == 0:
                 if args.with_tracking:
-                    accelerator.log({"train/running_loss": running_loss / args.logging_steps}, step=global_step)
+                    accelerator.log(
+                        {
+                            "train/running_loss":
+                            running_loss / args.logging_steps
+                        },
+                        step=global_step)
                     running_loss = 0
 
             if global_step % args.evaluation_steps == 0:
-                eval_metrics = evaluation_loop(
-                    model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
-                )
+                eval_metrics = evaluation_loop(model, eval_dataloader,
+                                               processor, normalizer, metric,
+                                               forced_decoder_ids, accelerator)
                 if args.with_tracking:
-                    logger.info(f"Step {global_step} eval metrics: {eval_metrics}")
+                    logger.info(
+                        f"Step {global_step} eval metrics: {eval_metrics}")
                     accelerator.log(eval_metrics, step=global_step)
-                if best_metric is None or eval_metrics["eval/wer"] < best_metric:
+                if best_metric is None or eval_metrics[
+                        "eval/wer"] < best_metric:
                     best_metric = eval_metrics["eval/wer"]
-                    accelerator.save_state(os.path.join(args.output_dir, "best_checkpoint"))
+                    accelerator.save_state(
+                        os.path.join(args.output_dir, "best_checkpoint"), safe_serialization=False)
                 model.train()
 
             if global_step >= args.max_train_steps:
@@ -749,17 +799,19 @@ def main():
         if args.push_to_hub and epoch <= args.num_train_epochs - 1:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process)
+            unwrapped_model.save_pretrained(
+                args.output_dir, is_main_process=accelerator.is_main_process, safe_serialization=False)
             # evaluate the model at the end of training
-            eval_metrics = evaluation_loop(
-                model, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
-            )
+            eval_metrics = evaluation_loop(model, eval_dataloader, processor,
+                                           normalizer, metric,
+                                           forced_decoder_ids, accelerator)
             if args.with_tracking:
                 logger.info(f"Step {global_step} eval metrics: {eval_metrics}")
                 accelerator.log(eval_metrics, step=global_step)
             if best_metric is None or eval_metrics["eval/wer"] < best_metric:
                 best_metric = eval_metrics["eval/wer"]
-                accelerator.save_state(os.path.join(args.output_dir, "best_checkpoint"))
+                accelerator.save_state(
+                    os.path.join(args.output_dir, "best_checkpoint"), safe_serialization=False)
 
             if accelerator.is_main_process:
                 processor.tokenizer.save_pretrained(args.output_dir)
@@ -772,20 +824,26 @@ def main():
 
     if args.load_best_model:
         # load the best model
-        accelerator.load_state(os.path.join(args.output_dir, "best_checkpoint"))
-        model.module.resize_modules_by_rank_pattern(model.peft_config["default"].rank_pattern, "default")
-        eval_metrics = evaluation_loop(
-            model.module, eval_dataloader, processor, normalizer, metric, forced_decoder_ids, accelerator
-        )
+        accelerator.load_state(os.path.join(args.output_dir,
+                                            "best_checkpoint"))
+        model.module.resize_modules_by_rank_pattern(
+            model.peft_config["default"].rank_pattern, "default")
+        eval_metrics = evaluation_loop(model.module, eval_dataloader,
+                                       processor, normalizer, metric,
+                                       forced_decoder_ids, accelerator)
         if args.with_tracking:
             best_metrics = {"best_" + k: v for k, v in eval_metrics.items()}
             accelerator.log(best_metrics, step=global_step)
 
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)
-    unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process)
+    unwrapped_model.save_pretrained(
+        args.output_dir,
+        safe_serialization=False,
+        is_main_process=accelerator.is_main_process)
     if accelerator.is_main_process:
-        processor.tokenizer.save_pretrained(args.output_dir)
+        processor.tokenizer.save_pretrained(args.output_dir,
+                                            safe_serialization=False)
         if args.push_to_hub:
             api.upload_folder(
                 repo_id=repo_id,

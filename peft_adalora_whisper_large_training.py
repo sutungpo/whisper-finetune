@@ -448,13 +448,13 @@ def main():
     accelerator = Accelerator(**accelerator_kwargs)
 
     # Make one log on every process with the configuration for debugging.
+    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+                        datefmt="%m/%d/%Y %H:%M:%S",
+                        level=logging.INFO)
     stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(logging.DEBUG)
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-        handlers=[logging.FileHandler("log.txt"),stream_handler])
+    fileHandler = logging.FileHandler("log.txt")
+    logger.logger.addHandler(stream_handler)
+    logger.logger.addHandler(fileHandler)
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -478,7 +478,8 @@ def main():
                 repo_name = Path(args.output_dir).absolute().name
             repo_id = api.create_repo(repo_name, exist_ok=True).repo_id
 
-            with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
+            with open(os.path.join(args.output_dir, ".gitignore"),
+                      "w+") as gitignore:
                 if "step_*" not in gitignore:
                     gitignore.write("step_*\n")
                 if "epoch_*" not in gitignore:
@@ -627,7 +628,9 @@ def main():
             )
 
         if args.initialize_from_checkpoint:
-            model = PeftModel.from_pretrained(model, args.initialize_from_checkpoint, is_trainable=True)
+            model = PeftModel.from_pretrained(model,
+                                              args.initialize_from_checkpoint,
+                                              is_trainable=True)
         else:
             model = get_peft_model(model, config)
         model.print_trainable_parameters()
@@ -783,8 +786,9 @@ def main():
                 if best_metric is None or eval_metrics[
                         "eval/wer"] < best_metric:
                     best_metric = eval_metrics["eval/wer"]
-                    accelerator.save_state(
-                        os.path.join(args.output_dir, "best_checkpoint"), safe_serialization=False)
+                    accelerator.save_state(os.path.join(
+                        args.output_dir, "best_checkpoint"),
+                                           safe_serialization=False)
                 model.train()
 
             if global_step >= args.max_train_steps:
@@ -799,7 +803,9 @@ def main():
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             unwrapped_model.save_pretrained(
-                args.output_dir, is_main_process=accelerator.is_main_process, safe_serialization=False)
+                args.output_dir,
+                is_main_process=accelerator.is_main_process,
+                safe_serialization=False)
             # evaluate the model at the end of training
             eval_metrics = evaluation_loop(model, eval_dataloader, processor,
                                            normalizer, metric,
@@ -809,8 +815,9 @@ def main():
                 accelerator.log(eval_metrics, step=global_step)
             if best_metric is None or eval_metrics["eval/wer"] < best_metric:
                 best_metric = eval_metrics["eval/wer"]
-                accelerator.save_state(
-                    os.path.join(args.output_dir, "best_checkpoint"), safe_serialization=False)
+                accelerator.save_state(os.path.join(args.output_dir,
+                                                    "best_checkpoint"),
+                                       safe_serialization=False)
 
             if accelerator.is_main_process:
                 processor.tokenizer.save_pretrained(args.output_dir)

@@ -631,7 +631,6 @@ def main():
         else:
             model = get_peft_model(model, config)
         model.print_trainable_parameters()
-
     # optimizer
     optimizer = torch.optim.AdamW(model.parameters(),
                                   lr=args.learning_rate,

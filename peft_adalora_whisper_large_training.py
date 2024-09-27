@@ -736,10 +736,6 @@ def main():
                 outputs = model(**batch)
                 loss = outputs.loss
                 accelerator.backward(loss)
-                if optimizer.scaler is not None:
-                    logger.info(
-                        f"step {step} of epoch {epoch}:optmizer's scalars {optimizer.scaler.get_scale()}"
-                    )
                 optimizer.step()
                 lr_scheduler.step()
 

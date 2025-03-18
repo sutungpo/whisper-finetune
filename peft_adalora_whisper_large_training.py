@@ -408,11 +408,12 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
                 normalized_references.extend([normalizer(label).strip() for label in decoded_labels])
             del generated_tokens, labels, batch
         gc.collect()
-    result = metric.compute(predictions=predictions, references=references)
-    bleu = result["bleu"]
-    #normalized_wer = metric.compute(predictions=normalized_predictions, references=normalized_references)
-    #eval_metrics = {"eval/wer": wer, "eval/normalized_wer": normalized_wer}
-    eval_metrics = {"eval/wer": bleu}
+    # result = metric.compute(predictions=predictions, references=references)
+    # bleu = result["bleu"]
+    # eval_metrics = {"eval/wer": bleu}
+    wer = 100 * metric.compute(predictions=predictions, references=references)
+    normalized_wer = metric.compute(predictions=normalized_predictions, references=normalized_references)
+    eval_metrics = {"eval/wer": wer, "eval/normalized_wer": normalized_wer}
     try:
         if accelerator.get_tracker("wandb"):
             sample_size = min(len(predictions), 256)
@@ -519,7 +520,7 @@ def main():
     )
     raw_datasets["test"] = loading_method(args.dataset_name, args.language_abbr, split=test_split, use_auth_token=True)
     '''
-    raw_datasets = load_from_disk(args.dataset_path).train_test_split(0.1)
+    raw_datasets = load_dataset(args.dataset_path)['train'].train_test_split(0.1)
     raw_datasets = raw_datasets.cast_column("audio",
                                             Audio(sampling_rate=16000))
 

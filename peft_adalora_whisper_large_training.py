@@ -392,7 +392,7 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
                 generated_tokens = (
                     model.generate(
                         input_features=batch["input_features"],
-                        forced_decoder_ids=forced_decoder_ids,
+                        # forced_decoder_ids=forced_decoder_ids,
                         max_new_tokens=255,
                     )
                     .cpu()
@@ -563,14 +563,18 @@ def main():
     )
 
     # metric
-    metric = evaluate.load("bleu")
+    # metric = evaluate.load("bleu")
+    metric = evaluate.load("wer")
 
     logger.info(f'starting model initialization')
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         quantization_config=BitsAndBytesConfig(load_in_8bit=True))
-    model.config.forced_decoder_ids = None
+    model.generation_config.language = "ja"
+    model.generation_config.task = "transcribe"
+    model.generation_config.forced_decoder_ids = None
+    # model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
     if len(set(model.hf_device_map.values()).intersection({"cpu",
                                                            "disk"})) > 0:

@@ -84,19 +84,6 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def prepare_dataset_wrapper(processor):
-    def prepare_dataset(batch):
-        # load and resample audio data from 48 to 16kHz
-        audio = batch["audio"]
-
-        # compute log-Mel input features from input audio array
-        batch["input_features"] = processor.feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
-
-        # encode target text to label ids
-        batch["labels"] = processor.tokenizer(batch["sentence"]).input_ids
-        return batch
-
-    return prepare_dataset
 
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
@@ -132,14 +119,25 @@ def main():
     model_path = args.model_name_or_path
     language = args.language_abbr
     task = args.task
-    raw_datasets = load_dataset(data_path)['train'].train_test_split(0.25)
-    raw_datasets = raw_datasets.cast_column("audio",
-                                            Audio(sampling_rate=16000))
     feature_extractor = WhisperFeatureExtractor.from_pretrained(model_path)
     tokenizer = WhisperTokenizer.from_pretrained(model_path, language=language, task=task)
     processor = WhisperProcessor.from_pretrained(model_path, language=language, task=task)
+    def prepare_dataset(batch):
+        # load and resample audio data from 48 to 16kHz
+        audio = batch["audio"]
 
-    raw_datasets = raw_datasets.map(prepare_dataset_wrapper, remove_columns=raw_datasets.column_names["train"], num_proc=1)
+        # compute log-Mel input features from input audio array
+        batch["input_features"] = processor.feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
+
+        # encode target text to label ids
+        batch["labels"] = processor.tokenizer(batch["sentence"]).input_ids
+        return batch
+
+    raw_datasets = load_dataset(data_path)['train'].train_test_split(0.25)
+    raw_datasets = raw_datasets.cast_column("audio",
+                                            Audio(sampling_rate=16000))
+
+    raw_datasets = raw_datasets.map(prepare_dataset, remove_columns=raw_datasets.column_names["train"], num_proc=1)
     model = WhisperForConditionalGeneration.from_pretrained(model_path)
     model.generation_config.language = language
     model.generation_config.task = task

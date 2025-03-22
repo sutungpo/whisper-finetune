@@ -369,6 +369,7 @@ def main():
 
     accelerator_kwargs = {
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "mixed_precision": "fp16",
     }
     if args.with_tracking:
         accelerator_kwargs["log_with"] = args.report_to

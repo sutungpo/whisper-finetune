@@ -266,7 +266,7 @@ def main():
     train_dataloader = DataLoader(
         raw_datasets["train"],
         batch_size=args.per_device_train_batch_size,
-        shuffle=True,
+        # shuffle=True,
         collate_fn=data_collator,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.dataloader_pin_memory,

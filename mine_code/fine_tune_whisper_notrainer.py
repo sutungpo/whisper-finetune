@@ -206,10 +206,10 @@ def main():
     LOCAL_RANK = int(os.environ["LOCAL_RANK"])
     WORLD_SIZE = int(os.environ["WORLD_SIZE"])
     MASTER_RANK = 0
+    device = torch.device(f"cuda:{LOCAL_RANK}")
     torch.cuda.set_device(device)
     torch.distributed.init_process_group(backend="nccl", world_size=WORLD_SIZE,
                                          rank=RANK)
-    device = torch.device(f"cuda:{LOCAL_RANK}")
     torch.distributed.barrier()
 
     args = parse_args()

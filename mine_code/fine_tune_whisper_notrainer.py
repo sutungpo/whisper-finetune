@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 import argparse
 import torch
+import os
+import torch
+import torch.nn as nn
 import tqdm
 import evaluate
 from dataclasses import dataclass
 from torch.utils.data import DataLoader
 from typing import Any, Dict, List, Union
 from datasets import load_dataset, Audio
+from torch.distributed import init_process_group, destroy_process_group
 from transformers import ( 
     WhisperFeatureExtractor,
     WhisperTokenizer,
@@ -192,7 +196,22 @@ def parse_args():
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
 
     return args
+
+def ddp_setup():
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    init_process_group(backend="nccl")
+
 def main():
+    RANK = int(os.environ["RANK"])
+    LOCAL_RANK = int(os.environ["LOCAL_RANK"])
+    WORLD_SIZE = int(os.environ["WORLD_SIZE"])
+    MASTER_RANK = 0
+    torch.cuda.set_device(device)
+    torch.distributed.init_process_group(backend="nccl", world_size=WORLD_SIZE,
+                                         rank=RANK)
+    device = torch.device(f"cuda:{LOCAL_RANK}")
+    torch.distributed.barrier()
+
     args = parse_args()
     raw_datasets = load_dataset(args.dataset_path)['train'].train_test_split(0.1)
     raw_datasets = raw_datasets.cast_column("audio",Audio(sampling_rate=16000))
@@ -243,6 +262,7 @@ def main():
         processor=processor,
         decoder_start_token_id=model.config.decoder_start_token_id,
     )
+    sampler = torch.utils.data.distributed.DistributedSampler(raw_datasets['train'])
     train_dataloader = DataLoader(
         raw_datasets["train"],
         batch_size=args.per_device_train_batch_size,
@@ -250,6 +270,7 @@ def main():
         collate_fn=data_collator,
         num_workers=args.dataloader_num_workers,
         pin_memory=args.dataloader_pin_memory,
+        sampler=sampler,
     )
     eval_dataloader = DataLoader(
         raw_datasets["test"],
@@ -271,8 +292,8 @@ def main():
         wer = 100 * metric.compute(predictions=pred_str, references=label_str)
         return {"wer": wer}
 
-    device='cuda'
     model.to(device)
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[device])
 
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * len(train_dataloader)
@@ -280,15 +301,18 @@ def main():
     lr_scheduler = get_scheduler(name=args.lr_scheduler_type, optimizer=optimizer, num_warmup_steps=args.num_warmup_steps, num_training_steps=args.max_train_steps)
     
     for epoch in range(args.num_train_epochs):
+        sampler.set_epoch(epoch)
         for batch in train_dataloader:
             model.train()
             input_features, labels = batch['input_features'].to(device), batch['labels'].to(device)
+            optimizer.zero_grad()
             outputs = model(input_features=input_features, labels=labels)
             loss = outputs.loss
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
-            optimizer.zero_grad()
+
+    torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     main()

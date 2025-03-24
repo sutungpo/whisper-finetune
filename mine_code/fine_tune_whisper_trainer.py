@@ -5,6 +5,7 @@ import evaluate
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 from datasets import load_dataset, Audio
+from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from transformers import ( 
     WhisperFeatureExtractor,
     WhisperTokenizer,
@@ -183,7 +184,8 @@ def parse_args():
         action="store_true",
         help="Whether to use debug mode",
     )
-    parser.add_argument("--fp16", action="store_false", help="Whether to use fp16.")
+    parser.add_argument("--fp16", action="store_true", help="Whether to use fp16.")
+    parser.add_argument("--save_total_limit", type=int, default=1, help="Max number of checkpoints to save.")
     args = parser.parse_args()
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
@@ -241,6 +243,7 @@ def main():
         decoder_start_token_id=model.config.decoder_start_token_id,
     )
     metric = evaluate.load("wer")
+    normalizer = BasicTextNormalizer()
     def compute_metrics(pred):
         pred_ids = pred.predictions
         label_ids = pred.label_ids
@@ -249,14 +252,18 @@ def main():
         # we do not want to group tokens when computing the metrics
         pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
         label_str = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+        normalized_pred_str = [normalizer(pred).strip() for pred in pred_str]
+        normalized_label_str = [normalizer(label).strip() for label in label_str]
         wer = 100 * metric.compute(predictions=pred_str, references=label_str)
-        return {"wer": wer}
+        normalized_wer = 100 * metric.compute(predictions=normalized_pred_str, references=normalized_label_str)
+        return {"wer": wer, "normalized_wer": normalized_wer}
 
     training_args = Seq2SeqTrainingArguments(
         output_dir="./whisper-small-ja",  # change to a repo name of your choice
         per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
         learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
         warmup_steps=args.num_warmup_steps,
         max_steps=args.max_train_steps,
         gradient_checkpointing=True,
@@ -270,9 +277,12 @@ def main():
         logging_steps=args.logging_steps,
         report_to=[args.report_to],
         load_best_model_at_end=True,
-        metric_for_best_model="wer",
+        metric_for_best_model="normalized_wer",
         greater_is_better=False,
+        dataloader_pin_memory=args.dataloader_pin_memory,
+        seed=args.seed,
         push_to_hub=False,
+        save_safetensors= False,
     )
     trainer = Seq2SeqTrainer(
         args=training_args,

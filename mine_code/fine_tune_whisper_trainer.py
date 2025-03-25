@@ -13,7 +13,8 @@ from transformers import (
     WhisperForConditionalGeneration, 
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
-    SchedulerType
+    SchedulerType,
+    EarlyStoppingCallback,
 )
 
 def parse_args():
@@ -261,8 +262,9 @@ def main():
     training_args = Seq2SeqTrainingArguments(
         output_dir="./whisper-small-ja",  # change to a repo name of your choice
         per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
+        gradient_accumulation_steps= args.gradient_accumulation_steps,  # increase by 2x for every 2x decrease in batch size
         learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_steps=args.num_warmup_steps,
         max_steps=args.max_train_steps,
@@ -283,6 +285,10 @@ def main():
         seed=args.seed,
         push_to_hub=False,
         save_safetensors= False,
+        optim="adamw_bnb_8bit",
+    )
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=3  # Stop if no improvement after 3 evaluations
     )
     trainer = Seq2SeqTrainer(
         args=training_args,
@@ -292,8 +298,9 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         tokenizer=processor.feature_extractor,
+        callbacks=[early_stopping_callback],
     )
-    processor.save_pretrained(training_args.output_dir)
+    # processor.save_pretrained(training_args.output_dir)
 
     trainer.train()
 

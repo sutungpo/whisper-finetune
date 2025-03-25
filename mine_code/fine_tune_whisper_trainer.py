@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import argparse
 import torch
+import sys
 import evaluate
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
@@ -186,7 +187,7 @@ def parse_args():
         help="Whether to use debug mode",
     )
     parser.add_argument("--fp16", action="store_true", help="Whether to use fp16.")
-    parser.add_argument("--save_total_limit", type=int, default=1, help="Max number of checkpoints to save.")
+    parser.add_argument("--save_total_limit", type=int, default=2, help="Max number of checkpoints to save.")
     args = parser.parse_args()
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
@@ -194,7 +195,7 @@ def parse_args():
     return args
 def main():
     args = parse_args()
-    raw_datasets = load_dataset(args.dataset_path)['train'].train_test_split(0.1)
+    raw_datasets = load_dataset(args.dataset_path)['train'].shuffle(seed=args.seed).train_test_split(test_size=0.1)
     raw_datasets = raw_datasets.cast_column("audio",Audio(sampling_rate=16000))
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language="ja", task="transcribe")
@@ -245,6 +246,13 @@ def main():
     )
     metric = evaluate.load("wer")
     normalizer = BasicTextNormalizer()
+    from spacy import load as spacy_load
+    from ginza import set_split_mode as ginza_set_split_mode
+    nlp = spacy_load("ja_ginza")
+    ginza_set_split_mode(nlp, "C")
+    for mod in ['spacy', 'ginza']:
+        if mod in sys.modules:
+            del sys.modules[mod]
     def compute_metrics(pred):
         pred_ids = pred.predictions
         label_ids = pred.label_ids
@@ -255,6 +263,10 @@ def main():
         label_str = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
         normalized_pred_str = [normalizer(pred).strip() for pred in pred_str]
         normalized_label_str = [normalizer(label).strip() for label in label_str]
+        pred_str = [" ".join([ str(i) for i in nlp(j) ]) for j in pred_str]
+        label_str = [" ".join([ str(i) for i in nlp(j) ]) for j in label_str]
+        normalized_pred_str = [" ".join([ str(i) for i in nlp(j) ]) for j in normalized_pred_str]
+        normalized_label_str = [" ".join([ str(i) for i in nlp(j) ]) for j in normalized_label_str]
         wer = 100 * metric.compute(predictions=pred_str, references=label_str)
         normalized_wer = 100 * metric.compute(predictions=normalized_pred_str, references=normalized_label_str)
         return {"wer": wer, "normalized_wer": normalized_wer}
@@ -286,6 +298,7 @@ def main():
         push_to_hub=False,
         save_safetensors= False,
         optim="adamw_bnb_8bit",
+        save_total_limit=args.save_total_limit,
     )
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=3  # Stop if no improvement after 3 evaluations

@@ -282,7 +282,6 @@ def main():
         max_steps=args.max_train_steps,
         gradient_checkpointing=True,
         fp16=args.fp16,
-        evaluation_strategy="steps",
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         predict_with_generate=True,
         generation_max_length=225,

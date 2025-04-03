@@ -299,6 +299,7 @@ def main():
         optim="adamw_bnb_8bit",
         save_total_limit=args.save_total_limit,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        eval_strategy = "steps",
     )
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=3  # Stop if no improvement after 3 evaluations

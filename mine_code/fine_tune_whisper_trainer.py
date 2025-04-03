@@ -299,6 +299,7 @@ def main():
         save_safetensors= False,
         optim="adamw_bnb_8bit",
         save_total_limit=args.save_total_limit,
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=3  # Stop if no improvement after 3 evaluations
@@ -315,7 +316,7 @@ def main():
     )
     # processor.save_pretrained(training_args.output_dir)
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
 if __name__ == "__main__":
     main()

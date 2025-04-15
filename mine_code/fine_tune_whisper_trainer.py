@@ -26,6 +26,12 @@ def parse_args():
         help="Path to pretrained model or model identifier from huggingface.co/models.",
         required=True,
     )
+    parser.add_argument(
+       "--pure_dataset",
+        action="store_true",
+        help="Whether or not to use pure dataset for training.",
+        required=True,
+    )
     parser.add_argument("--language", type=str, help="Language to use for training; e.g., 'Hindi' ", required=False)
     parser.add_argument("--language_abbr", type=str, help="Language to use for training; e.g., 'hi' ", required=False)
     parser.add_argument(
@@ -196,7 +202,8 @@ def parse_args():
 def main():
     args = parse_args()
     raw_datasets = load_dataset(args.dataset_path)['train'].shuffle(seed=args.seed).train_test_split(test_size=0.1)
-    raw_datasets = raw_datasets.cast_column("audio",Audio(sampling_rate=16000))
+    if not args.pure_dataset:
+        raw_datasets = raw_datasets.cast_column("audio",Audio(sampling_rate=16000))
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language="ja", task="transcribe")
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language="ja", task="transcribe")

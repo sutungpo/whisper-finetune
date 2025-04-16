@@ -16,6 +16,7 @@ from transformers import (
     Seq2SeqTrainer,
     SchedulerType,
     EarlyStoppingCallback,
+    TrainerCallback,
 )
 
 def parse_args():
@@ -194,6 +195,7 @@ def parse_args():
     )
     parser.add_argument("--fp16", action="store_true", help="Whether to use fp16.")
     parser.add_argument("--save_total_limit", type=int, default=2, help="Max number of checkpoints to save.")
+    parser.add_argument("--early_stop_steps", type=int, default=0, help="Whether to use early stop")
     args = parser.parse_args()
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
@@ -308,6 +310,20 @@ def main():
         resume_from_checkpoint=args.resume_from_checkpoint,
         eval_strategy = "steps",
     )
+    class StopAtStepCallback(TrainerCallback):
+        def __init__(self, stop_step):
+            self.stop_step = stop_step
+        def on_step_end(self, args, state, control, **kwargs):
+            if state.global_step >= self.stop_step:
+                control.should_save = True
+                return control
+        
+        def on_save(self, args, state, control, **kwargs):
+            if state.global_step >= self.stop_step:
+                control.should_training_stop = True
+                return control
+
+    stop_step_callback = StopAtStepCallback(args.early_stop_steps) if args.early_stop_steps > 0 else None
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=3  # Stop if no improvement after 3 evaluations
     )
@@ -319,7 +335,7 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         tokenizer=processor.feature_extractor,
-        callbacks=[early_stopping_callback],
+        callbacks=[early_stopping_callback, stop_step_callback],
     )
     # processor.save_pretrained(training_args.output_dir)
 

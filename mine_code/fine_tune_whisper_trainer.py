@@ -327,6 +327,7 @@ def main():
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=3  # Stop if no improvement after 3 evaluations
     )
+    callback_list = [early_stopping_callback, stop_step_callback] if args.early_stop_steps > 0 else [early_stopping_callback]
     trainer = Seq2SeqTrainer(
         args=training_args,
         model=model,
@@ -335,7 +336,7 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         tokenizer=processor.feature_extractor,
-        callbacks=[early_stopping_callback, stop_step_callback],
+        callbacks=callback_list,
     )
     # processor.save_pretrained(training_args.output_dir)
 

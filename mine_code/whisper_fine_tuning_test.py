@@ -152,7 +152,7 @@ def main():
     print_gpu_memory_stats(local_rank)
     
     # Load Whisper model
-    model_name = "openai/whisper-medium"
+    model_name = "openai/whisper-large-v3"
     print(f"Loading model: {model_name}")
     
     # Load processor first to separate memory usage
@@ -282,7 +282,7 @@ def main():
                     raise e
         
         # Save checkpoint at end of epoch (only from rank 0)
-        if rank == 0:
+        if rank == 0 and epoch % 2 == 0:
             checkpoint = {
                 'epoch': epoch,
                 'model_state_dict': model.module.state_dict(),

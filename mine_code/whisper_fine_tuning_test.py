@@ -166,7 +166,7 @@ def main():
         learning_rate=5e-5,
         warmup_steps=10,
         max_steps=30,
-        fp16=True,  # Use mixed precision
+        fp16=False,  # Use mixed precision
         logging_steps=10,
         save_steps=10,
         eval_steps=10,

@@ -115,11 +115,11 @@ def main():
     # Load a dataset - using Common Voice as an example
     try:
         # Attempt to load Common Voice dataset
-        dataset = load_dataset("mozilla-foundation/common_voice_11_0", "en", split="train[:40]", trust_remote_code=True)
+        dataset = load_dataset("mozilla-foundation/common_voice_11_0", "en", split="train[:200]", trust_remote_code=True)
     except Exception as e:
         print(f"Failed to load Common Voice dataset: {e}")
         print("Falling back to LibriSpeech dataset")
-        dataset = load_dataset("librispeech_asr", "clean", split="train.100[:40]", trust_remote_code=True)
+        dataset = load_dataset("librispeech_asr", "clean", split="train.100[:200]", trust_remote_code=True)
     
     # Ensure audio format is consistent
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
@@ -161,8 +161,8 @@ def main():
     # Define training arguments
     training_args = Seq2SeqTrainingArguments(
         output_dir="whisper-medium-finetuned",
-        per_device_train_batch_size=2,  # Start small, increase if memory allows
-        gradient_accumulation_steps=8,  # Increase effective batch size
+        per_device_train_batch_size=8,  # Start small, increase if memory allows
+        gradient_accumulation_steps=2,  # Increase effective batch size
         learning_rate=5e-5,
         warmup_steps=10,
         max_steps=30,

@@ -26,18 +26,9 @@ def print_gpu_memory_stats(device=None):
         print(f"GPU {i} Memory: Used {info.used/1024**2:.2f}MB / Total {info.total/1024**2:.2f}MB")
         
         if torch.cuda.is_available():
-            # PyTorch's tracking of allocated memory
             allocated = torch.cuda.memory_allocated(i) / 1024**2
             reserved = torch.cuda.memory_reserved(i) / 1024**2
             print(f"GPU {i} PyTorch: Allocated {allocated:.2f}MB / Reserved {reserved:.2f}MB")
-            
-            # Get memory details of tensors if possible
-            if hasattr(torch.cuda, 'memory_snapshot'):
-                snapshot = torch.cuda.memory_snapshot()
-                print(f"Memory Snapshot for GPU {i}:")
-                for block in snapshot:
-                    if block['device'] == i:
-                        print(f"  Block: {block['size']/1024**2:.2f}MB")
 
 def log_memory_usage(tag=""):
     """Log GPU memory usage at a specific point in the code"""

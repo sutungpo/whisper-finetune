@@ -193,7 +193,7 @@ def main():
     )
     
     # Memory-efficient batch size - start small and increase if possible
-    batch_size = 6  # Start with a small batch size
+    batch_size = 16  # Start with a small batch size
     dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,

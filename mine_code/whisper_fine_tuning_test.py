@@ -76,7 +76,25 @@ class AudioDataset(Dataset):
         ).input_features.squeeze()
         
         # Get the corresponding labels
-        labels = self.processor.tokenizer(item["text"]).input_ids
+        # Different datasets use different column names for transcriptions
+        if "text" in item:
+            text = item["text"]
+        elif "sentence" in item:
+            text = item["sentence"]
+        elif "transcription" in item:
+            text = item["transcription"]
+        else:
+            # Fallback for Common Voice which uses "sentence" in newer versions
+            for possible_text_column in ["sentence", "transcript", "normalized_text"]:
+                if possible_text_column in self.dataset.column_names:
+                    text = item.get(possible_text_column, "")
+                    break
+            else:
+                # If no text column is found, use empty string
+                print(f"Warning: No text column found in dataset. Available columns: {list(item.keys())}")
+                text = ""
+        
+        labels = self.processor.tokenizer(text).input_ids
         
         return {
             "input_features": input_features,

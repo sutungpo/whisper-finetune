@@ -1,8 +1,11 @@
 import os
 import torch
+import torch.distributed as dist
 import numpy as np
-from transformers import WhisperForConditionalGeneration, WhisperProcessor
-from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer, TrainerCallback
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
+from transformers import WhisperForConditionalGeneration, WhisperProcessor, Seq2SeqTrainingArguments, Seq2SeqTrainer
 from datasets import load_dataset, Audio
 import gc
 import GPUtil
@@ -23,9 +26,18 @@ def print_gpu_memory_stats(device=None):
         print(f"GPU {i} Memory: Used {info.used/1024**2:.2f}MB / Total {info.total/1024**2:.2f}MB")
         
         if torch.cuda.is_available():
+            # PyTorch's tracking of allocated memory
             allocated = torch.cuda.memory_allocated(i) / 1024**2
             reserved = torch.cuda.memory_reserved(i) / 1024**2
             print(f"GPU {i} PyTorch: Allocated {allocated:.2f}MB / Reserved {reserved:.2f}MB")
+            
+            # Get memory details of tensors if possible
+            if hasattr(torch.cuda, 'memory_snapshot'):
+                snapshot = torch.cuda.memory_snapshot()
+                print(f"Memory Snapshot for GPU {i}:")
+                for block in snapshot:
+                    if block['device'] == i:
+                        print(f"  Block: {block['size']/1024**2:.2f}MB")
 
 def log_memory_usage(tag=""):
     """Log GPU memory usage at a specific point in the code"""
@@ -33,56 +45,98 @@ def log_memory_usage(tag=""):
     memory_reserved = torch.cuda.memory_reserved() / 1024**2
     print(f"MEMORY [{tag}] Allocated: {memory_allocated:.2f}MB, Reserved: {memory_reserved:.2f}MB")
 
-# Create a callback for memory tracking during training
-class MemoryTrackingCallback(TrainerCallback):
-    def __init__(self, log_freq=10):
-        self.log_freq = log_freq
+def init_distributed():
+    """Initialize distributed training setup"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+    else:
+        print("Distributed environment variables not set. Using defaults.")
+        rank = 0
+        world_size = 1
+        local_rank = 0
+        
+    # Set device
+    torch.cuda.set_device(local_rank)
     
-    def on_step_begin(self, args, state, control, **kwargs):
-        if state.global_step % self.log_freq == 0:
-            log_memory_usage(f"step{state.global_step}_begin")
-    
-    def on_step_end(self, args, state, control, **kwargs):
-        if state.global_step % self.log_freq == 0:
-            log_memory_usage(f"step{state.global_step}_end")
-            # Clear cache periodically to reduce fragmentation
-            if state.global_step % 50 == 0:
-                gc.collect()
-                torch.cuda.empty_cache()
-                log_memory_usage(f"step{state.global_step}_after_cache_clear")
-    
-    def on_epoch_begin(self, args, state, control, **kwargs):
-        log_memory_usage(f"epoch{state.epoch}_begin")
-        print_gpu_memory_stats()
-    
-    def on_epoch_end(self, args, state, control, **kwargs):
-        log_memory_usage(f"epoch{state.epoch}_end")
-        print_gpu_memory_stats()
-    
-    def on_train_begin(self, args, state, control, **kwargs):
-        log_memory_usage("train_begin")
-        print_gpu_memory_stats()
+    # Initialize process group
+    dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
+    return local_rank, rank, world_size
 
-# Custom dataset processing
-def prepare_dataset(batch, processor):
-    # Load audio and process it
-    audio = batch["audio"]
+class AudioDataset(Dataset):
+    def __init__(self, dataset, processor):
+        self.dataset = dataset
+        self.processor = processor
+        
+    def __len__(self):
+        return len(self.dataset)
     
-    # Process audio data
-    batch["input_features"] = processor(
-        audio["array"], 
-        sampling_rate=audio["sampling_rate"],
-        return_tensors="pt"
-    ).input_features[0]
+    def __getitem__(self, idx):
+        # Load audio and preprocess in a memory-efficient way
+        item = self.dataset[idx]
+        audio = item["audio"]["array"]
+        
+        # Process audio data
+        input_features = self.processor(
+            audio, 
+            sampling_rate=16000,
+            return_tensors="pt"
+        ).input_features.squeeze()
+        
+        # Get the corresponding labels
+        labels = self.processor.tokenizer(item["text"]).input_ids
+        
+        return {
+            "input_features": input_features,
+            "labels": labels
+        }
+
+def collate_fn(batch):
+    """Custom collate function to handle variable-length inputs"""
+    input_features = [item["input_features"] for item in batch]
+    labels = [item["labels"] for item in batch]
     
-    # Process text to get labels
-    batch["labels"] = processor.tokenizer(batch["sentence"]).input_ids
+    # Pad input features
+    max_len = max([item.shape[0] for item in input_features])
+    padded_inputs = []
     
-    return batch
+    for item in input_features:
+        if item.shape[0] < max_len:
+            # Pad with zeros
+            padding = torch.zeros((max_len - item.shape[0], item.shape[1]))
+            padded_item = torch.cat([item, padding], dim=0)
+            padded_inputs.append(padded_item)
+        else:
+            padded_inputs.append(item)
+    
+    # Convert to tensors
+    input_features = torch.stack(padded_inputs)
+    
+    # Pad labels
+    max_label_len = max([len(label) for label in labels])
+    padded_labels = []
+    
+    for label in labels:
+        if len(label) < max_label_len:
+            padded_label = label + [-100] * (max_label_len - len(label))
+            padded_labels.append(padded_label)
+        else:
+            padded_labels.append(label)
+    
+    labels = torch.tensor(padded_labels)
+    
+    return {
+        "input_features": input_features,
+        "labels": labels
+    }
 
 def main():
-    # Set visible GPUs if needed
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    # Initialize distributed training
+    local_rank, rank, world_size = init_distributed()
+    device = torch.device(f"cuda:{local_rank}")
+    
+    print(f"Starting process rank {rank} on device {device}")
     
     # Track memory at beginning of script
     log_memory_usage("init")
@@ -98,166 +152,138 @@ def main():
     
     # Load model with efficient memory options
     model = WhisperForConditionalGeneration.from_pretrained(
-        model_name, 
-        torch_dtype=torch.float16,  # Use fp16 to reduce memory usage
+        model_name,
+        device_map={"": local_rank},
         low_cpu_mem_usage=True,
+        torch_dtype=torch.float16  # Use fp16 to reduce memory usage
     )
     log_memory_usage("after_model_load")
-    
-    # Enable gradient checkpointing for better memory efficiency
-    model.gradient_checkpointing_enable()
+    print_gpu_memory_stats(local_rank)
     
     # Clear cache to free up memory
     gc.collect()
     torch.cuda.empty_cache()
     log_memory_usage("after_cache_clear")
     
-    # Load a dataset - using Common Voice as an example
-    try:
-        # Attempt to load Common Voice dataset
-        dataset = load_dataset("mozilla-foundation/common_voice_11_0", "ja", split="train[:50]", trust_remote_code=True)
-    except Exception as e:
-        print(f"Failed to load Common Voice dataset: {e}")
-        print("Falling back to LibriSpeech dataset")
-        dataset = load_dataset("librispeech_asr", "clean", split="train.100[:50]", trust_remote_code=True)
-    
-    # Ensure audio format is consistent
+    # Load a small audio dataset
+    # Using Common Voice as an example
+    dataset = load_dataset("mozilla-foundation/common_voice_11_0", "ja", split="train[:50]")
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     
-    # Process the dataset
-    processed_dataset = dataset.map(
-        lambda x: prepare_dataset(x, processor),
-        remove_columns=dataset.column_names,
-        num_proc=2,  # Adjust based on CPU cores
+    # Split dataset for distributed training
+    if rank == 0:
+        print(f"Dataset size: {len(dataset)}")
+    
+    # Create DataLoader with distributed sampler
+    train_dataset = AudioDataset(dataset, processor)
+    sampler = DistributedSampler(
+        train_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True
     )
     
-    # Define the data collator
-    from dataclasses import dataclass
-    from typing import Dict, List, Union
+    # Memory-efficient batch size - start small and increase if possible
+    batch_size = 2  # Start with a small batch size
+    dataloader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        collate_fn=collate_fn,
+        num_workers=2,  # Adjust based on your CPU
+        pin_memory=True
+    )
     
-    @dataclass
-    class DataCollatorSpeechSeq2SeqWithPadding:
-        processor: WhisperProcessor
+    log_memory_usage("after_dataloader_setup")
+    
+    # Wrap model in DDP
+    model = DDP(model, device_ids=[local_rank])
+    log_memory_usage("after_ddp_setup")
+    
+    # Setup optimizer with gradient accumulation
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=5e-5,
+        weight_decay=0.01
+    )
+    
+    # Gradient accumulation steps (adjust based on memory availability)
+    gradient_accumulation_steps = 2
+    
+    # Learning rate scheduler
+    total_steps = len(dataloader) // gradient_accumulation_steps
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    
+    # Training loop with memory tracking
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        model.train()
+        sampler.set_epoch(epoch)
         
-        def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-            # Process input features
-            input_features = [{"input_features": feature["input_features"]} for feature in features]
-            batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
+        if rank == 0:
+            print(f"Epoch {epoch+1}/{num_epochs}")
+        
+        running_loss = 0.0
+        optimizer.zero_grad()
+        
+        for step, batch in enumerate(dataloader):
+            # Check memory before forward pass
+            if step % 10 == 0 and rank == 0:
+                log_memory_usage(f"epoch{epoch}_batch{step}_before_forward")
             
-            # Process labels
-            label_features = [{"input_ids": feature["labels"]} for feature in features]
-            labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+            # Move batch to device
+            input_features = batch["input_features"].to(device)
+            labels = batch["labels"].to(device)
             
-            # Replace padding with -100 for loss computation
-            labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
-            
-            # Add labels to batch
-            batch["labels"] = labels
-            
-            return batch
+            # Forward pass
+            try:
+                outputs = model(input_features=input_features, labels=labels)
+                loss = outputs.loss / gradient_accumulation_steps  # Normalize loss
+                loss.backward()
+                
+                if (step + 1) % gradient_accumulation_steps == 0 or step == len(dataloader) - 1:
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    
+                    # Memory tracking after step
+                    if rank == 0:
+                        log_memory_usage(f"epoch{epoch}_step{step}_after_optim")
+                
+                # Print progress
+                running_loss += loss.item() * gradient_accumulation_steps
+                if step % 10 == 0 and rank == 0:
+                    print(f"Step {step}/{len(dataloader)}, Loss: {running_loss/(step+1):.4f}")
+                    
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    print(f"OOM ERROR on rank {rank} at step {step}!")
+                    print_gpu_memory_stats(local_rank)
+                    
+                    # Provide troubleshooting guidance
+                    print("Troubleshooting suggestions:")
+                    print("1. Reduce batch size (current:", batch_size, ")")
+                    print("2. Increase gradient accumulation steps (current:", gradient_accumulation_steps, ")")
+                    print("3. Try sequence bucketing to reduce padding")
+                    print("4. Further reduce precision (e.g., use bfloat16 if available)")
+                    
+                    # Free memory
+                    del input_features, labels, outputs, loss
+                    torch.cuda.empty_cache()
+                    raise e
+        
+        # Save checkpoint at end of epoch (only from rank 0)
+        if rank == 0:
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.module.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }
+            torch.save(checkpoint, f"whisper_medium_checkpoint_epoch{epoch}.pt")
+            print(f"Checkpoint saved for epoch {epoch+1}")
     
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
-    
-    # Define training arguments
-    training_args = Seq2SeqTrainingArguments(
-        output_dir="whisper-medium-finetuned",
-        per_device_train_batch_size=8,  # Start small, increase if memory allows
-        gradient_accumulation_steps=2,  # Increase effective batch size
-        learning_rate=5e-5,
-        warmup_steps=10,
-        max_steps=30,
-        fp16=False,  # Use mixed precision
-        logging_steps=10,
-        save_steps=10,
-        eval_steps=10,
-        evaluation_strategy="steps",
-        predict_with_generate=True,
-        generation_max_length=225,
-        save_total_limit=2,
-        remove_unused_columns=False,  # Important for custom features
-        label_names=["labels"],
-        report_to="none",  # Disable wandb/tensorboard for memory efficiency
-        # Distributed training settings
-        local_rank=local_rank,
-        ddp_find_unused_parameters=False,  # Set to True if needed
-        # OOM prevention
-        gradient_checkpointing=True,
-        optim="adamw_torch",  # Can also try "adamw_8bit" with bitsandbytes installed
-    )
-    
-    # Initialize the Trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=processed_dataset,
-        eval_dataset=processed_dataset.select(range(min(50, len(processed_dataset)))),  # Small eval dataset
-        data_collator=data_collator,
-        tokenizer=processor.tokenizer,
-        callbacks=[MemoryTrackingCallback()],
-    )
-    
-    # Try to detect potential OOM before training
-    try:
-        # Monitor memory with a dry run
-        print("\nPerforming memory usage estimation...")
-        # Create a small subset to test memory usage
-        mini_dataset = processed_dataset.select(range(min(10, len(processed_dataset))))
-        test_dataloader = trainer.get_train_dataloader()
-        for idx, batch in enumerate(test_dataloader):
-            if idx >= 2:  # Just check first two batches
-                break
-            print(f"Test batch {idx+1}/2")
-            for key, val in batch.items():
-                if isinstance(val, torch.Tensor):
-                    print(f"  {key}: {val.shape}, {val.dtype}")
-            # Simulate a forward pass to check memory
-            with torch.no_grad():
-                outputs = model(**{k: v.to(trainer.args.device) for k, v in batch.items() if k != "labels"})
-            log_memory_usage(f"test_batch{idx+1}_forward")
-            del outputs
-            torch.cuda.empty_cache()
-        print("Memory estimation complete!")
-    except RuntimeError as e:
-        if "out of memory" in str(e):
-            print("OOM detected during test run!")
-            print("Recommendations:")
-            print("1. Reduce batch size (currently", training_args.per_device_train_batch_size, ")")
-            print("2. Increase gradient accumulation (currently", training_args.gradient_accumulation_steps, ")")
-            print("3. Try loading in 8-bit with bitsandbytes")
-            print("4. Consider further input sequence length limitations")
-            print_gpu_memory_stats()
-            raise e
-    
-    # Start training with OOM handling
-    try:
-        print("\nStarting training...")
-        trainer.train()
-    except RuntimeError as e:
-        if "out of memory" in str(e):
-            print("OOM ERROR during training!")
-            print_gpu_memory_stats()
-            
-            print("\nOOM Troubleshooting:")
-            print("1. Current settings:")
-            print(f"   - Batch size: {training_args.per_device_train_batch_size}")
-            print(f"   - Gradient accumulation: {training_args.gradient_accumulation_steps}")
-            print(f"   - Mixed precision: {training_args.fp16}")
-            print(f"   - Gradient checkpointing: {training_args.gradient_checkpointing}")
-            
-            print("\n2. Try these adjustments:")
-            print("   - Reduce batch size to 1")
-            print("   - Increase gradient accumulation to 16")
-            print("   - Install bitsandbytes and use 8-bit optimizers")
-            print("   - Pre-process audio to limit max length")
-            print("   - Use DeepSpeed ZeRO optimization")
-            
-            # Attempt to identify the specific operation causing OOM
-            error_context = str(e).split('\n')
-            for line in error_context:
-                if 'size' in line or 'shape' in line:
-                    print(f"\nPotential issue: {line}")
-            
-            raise e
+    # Cleanup
+    dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()

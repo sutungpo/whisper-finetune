@@ -115,7 +115,7 @@ def main():
     # Load a dataset - using Common Voice as an example
     try:
         # Attempt to load Common Voice dataset
-        dataset = load_dataset("mozilla-foundation/common_voice_11_0", "en", split="train[:50]", trust_remote_code=True)
+        dataset = load_dataset("mozilla-foundation/common_voice_11_0", "ja", split="train[:50]", trust_remote_code=True)
     except Exception as e:
         print(f"Failed to load Common Voice dataset: {e}")
         print("Falling back to LibriSpeech dataset")

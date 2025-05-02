@@ -158,7 +158,7 @@ def main():
     
     # Load a small audio dataset
     # Using Common Voice as an example
-    dataset = load_dataset("mozilla-foundation/common_voice_11_0", "ja", split="train[:50]")
+    dataset = load_dataset("mozilla-foundation/common_voice_11_0", "ja", split="train[:50]", trust_remote_code=True)
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     
     # Split dataset for distributed training

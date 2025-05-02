@@ -30,11 +30,11 @@ def print_gpu_memory_stats(device=None):
             reserved = torch.cuda.memory_reserved(i) / 1024**2
             print(f"GPU {i} PyTorch: Allocated {allocated:.2f}MB / Reserved {reserved:.2f}MB")
 
-def log_memory_usage(tag=""):
+def log_memory_usage(tag="", rank=0):
     """Log GPU memory usage at a specific point in the code"""
-    memory_allocated = torch.cuda.memory_allocated() / 1024**2
-    memory_reserved = torch.cuda.memory_reserved() / 1024**2
-    print(f"MEMORY [{tag}] Allocated: {memory_allocated:.2f}MB, Reserved: {memory_reserved:.2f}MB")
+    memory_allocated = torch.cuda.memory_allocated(rank) / 1024**2
+    memory_reserved = torch.cuda.memory_reserved(rank) / 1024**2
+    print(f"GPU {rank} MEMORY [{tag}] Allocated: {memory_allocated:.2f}MB, Reserved: {memory_reserved:.2f}MB")
 
 def init_distributed():
     """Initialize distributed training setup"""
@@ -148,7 +148,7 @@ def main():
     print(f"Starting process rank {rank} on device {device}")
     
     # Track memory at beginning of script
-    log_memory_usage("init")
+    log_memory_usage("init", local_rank)
     print_gpu_memory_stats(local_rank)
     
     # Load Whisper model
@@ -157,7 +157,7 @@ def main():
     
     # Load processor first to separate memory usage
     processor = WhisperProcessor.from_pretrained(model_name)
-    log_memory_usage("after_processor_load")
+    log_memory_usage("after_processor_load", local_rank)
     
     # Load model with efficient memory options
     model = WhisperForConditionalGeneration.from_pretrained(
@@ -166,13 +166,13 @@ def main():
         low_cpu_mem_usage=True,
         torch_dtype=torch.float16  # Use fp16 to reduce memory usage
     )
-    log_memory_usage("after_model_load")
+    log_memory_usage("after_model_load", local_rank)
     print_gpu_memory_stats(local_rank)
     
     # Clear cache to free up memory
     gc.collect()
     torch.cuda.empty_cache()
-    log_memory_usage("after_cache_clear")
+    log_memory_usage("after_cache_clear", local_rank)
     
     # Load a small audio dataset
     # Using Common Voice as an example
@@ -203,11 +203,11 @@ def main():
         pin_memory=True
     )
     
-    log_memory_usage("after_dataloader_setup")
+    log_memory_usage("after_dataloader_setup", local_rank)
     
     # Wrap model in DDP
     model = DDP(model, device_ids=[local_rank])
-    log_memory_usage("after_ddp_setup")
+    log_memory_usage("after_ddp_setup", local_rank)
     
     # Setup optimizer with gradient accumulation
     optimizer = torch.optim.AdamW(
@@ -238,7 +238,7 @@ def main():
         for step, batch in enumerate(dataloader):
             # Check memory before forward pass
             if step % 10 == 0 and rank == 0:
-                log_memory_usage(f"epoch{epoch}_batch{step}_before_forward")
+                log_memory_usage(f"epoch{epoch}_batch{step}_before_forward", local_rank)
             
             # Move batch to device
             input_features = batch["input_features"].to(device)
@@ -257,7 +257,7 @@ def main():
                     
                     # Memory tracking after step
                     if rank == 0:
-                        log_memory_usage(f"epoch{epoch}_step{step}_after_optim")
+                        log_memory_usage(f"epoch{epoch}_step{step}_after_optim", local_rank)
                 
                 # Print progress
                 running_loss += loss.item() * gradient_accumulation_steps
